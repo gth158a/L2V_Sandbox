@@ -1,13 +1,16 @@
-import com.amazonaws.auth.{AWSCredentials, BasicAWSCredentials}
-import com.amazonaws.ClientConfiguration
-import com.amazonaws.services.s3.AmazonS3Client
-import com.amazonaws.services.s3.transfer.TransferManager
+//import com.amazonaws.auth.{AWSCredentials, BasicAWSCredentials}
+//import com.amazonaws.ClientConfiguration
+//import com.amazonaws.services.s3.AmazonS3Client
+//import com.amazonaws.services.s3.transfer.TransferManager
 import java.io.File
+
 import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd._
 import org.apache.spark.SparkContext._
 import org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK_SER
+//import org.apache.spark.sql.types.{StructType, StructField, IntegerType}
+
 import scala.io.Source
 
 object RmseNew {
@@ -56,7 +59,7 @@ object RmseNew {
     }.collectAsMap()
   }
 
-  def getTrainOrTest(fileName: String)(implicit sc: SparkContext): RDD[(Int, Int, Double)] ={
+  def getTrainOrTest(fileName: String)(implicit sc: SparkContext): RDD[(Int, Int, Double)] = {
     /* load train set or test set into RDD and format
 
        Parameters
@@ -72,9 +75,21 @@ object RmseNew {
                                 movie provided by the given user
 
      */
-    sc.textFile(fileName).map{line =>
-      val Array(user, movie, rating) = line.split(",")
-      (user.toInt, movie.toInt, rating.toDouble)
+    sc.textFile(fileName).map{
+      line =>
+        try {
+          val Array(user, movie, rating) = line.split(",")
+        (user.toInt, movie.toInt, rating.toDouble)
+      }
+      catch {
+      case e: Exception => (0, 0, 0)
+    }
+      //    }
+
+      //    sc.textFile(fileName).map(f = _.split(',') match {
+      //      case Array(user, movie, rating) =>
+      //        (user.toInt, movie.toInt, rating.toDouble)
+      //    })
     }
   }
 
@@ -126,12 +141,20 @@ object RmseNew {
 
      */
     val embeddings = sc.textFile(sampleFile).map{ line =>
-      val fields = line.replace("List","").replace("(","").replace(")","").split(",")
-      val movie_id = (fields.head.toInt +1)
+//      val fields = line.split(" ")
+      val fields = line.split(" ")
+//      val movie_id = (fields.head.toInt +1)
+      val movie_id = (fields.head.toInt)
       val vector = fields.tail.map(_.toDouble).toArray
       (movie_id, vector)
+//      val fields = line.replace("List","").replace("(","").replace(")","").split(",")
+//      val movie_id = (fields.head.toInt +1)
+//      val vector = fields.tail.map(_.toDouble).toArray
+//      (movie_id, vector)
     }
-    val str = sampleFile.split("/").last.split("_").last.split(".txt")(0)
+//    val str = sampleFile.split("/").last.split("_").last.split(".txt")(0)
+//    val str = sampleFile.split("/").last
+    val str = "0"
     (hyperParamMap(str),embeddings)
 
   }
@@ -267,7 +290,8 @@ object RmseNew {
 
     val (Array(embedingSize, walkLength, numWalks), embeddingRDD) = getEmbeddings(embedFile)
     val embeddings = sc.broadcast(embeddingRDD.collectAsMap())
-    def calcErr(cntr: Integer): (Double, Integer) = {
+
+    def calcErr(cntr: Integer): (Double, Int) = {
       /* calculate error sum of squares and number of observations for a given subset of test data
 
          Parameters
@@ -280,81 +304,235 @@ object RmseNew {
                                            element is the count of observations
 
        */
-      val trainBroadcast = sc.broadcast(trainData(cntr).collectAsMap())
-      val err_sqr = testData.filter{case (k,v) => (k<((cntr+1)*20000) && (k>=(cntr*20000)))}.map{case (user, testList) =>
-        val trainList= trainBroadcast.value(user)//.filter(_._1 != testMovie)
-      val trainEmbed = trainList.map{case (movie, rate) => (movie, embeddings.value(movie),rate)}
-        val testEmbed = testList.map{ case (testMovie, testRate) => (testMovie,embeddings.value(testMovie),testRate)}
-        testEmbed.map{ case (testMovie, testEmbedding, testRate) =>
+      val embkeys = embeddingRDD.map(_._1).collect()
+
+//      val toBroadcast =  trainData(cntr).collectAsMap()
+      val toBroadcast =  trainData(cntr)
+//        .filter{
+//                    case ( x: Int, y:List[(Int, Double)]) =>
+//                      embkeys.contains(y(0)._1)
+//                    }
+//        .filter{
+//        item => embkeys.contains(item._2)
+//      }
+            .collectAsMap()
+      val trainUsers = toBroadcast.keys.toArray
+      val trainBroadcast = sc.broadcast(toBroadcast)
+//      val trainBroadcast = sc.broadcast(trainData(cntr).collectAsMap())
+
+//        embeddingRDD.map{item => item._1}
+
+      val err_sqr =
+        testData
+          .filter{
+          case ( x: Int, y:List[(Int, Double)]) =>
+            trainUsers.contains(x)
+          }
+
+//          .filter{ item => item.map{item._2} embkeys.contains(item._2)}
+
+//          .filter{
+//        case (k,v) =>
+//          (k<((cntr+1)*20000) && (k>=(cntr*20000)))
+//      }
+          .map{
+        case (user, testList) =>
+        val trainList = trainBroadcast.value(user)//.filter(_._1 != testMovie)
+
+
+
+
+            val trainEmbed = trainList.map {
+
+              case (movie, rate) =>
+//                if (embeddings.value(movie) != null )
+                  (movie, embeddings.value(movie), rate)
+//                else (movie, Array.ofDim[Double](100), rate)
+//                              (movie, embeddings.value(3258),rate)
+
+
+            }
+
+
+
+      val testEmbed = testList.map{
+        case (testMovie, testRate) =>
+//          if (embeddings.value(testMovie) != null )
+            (testMovie,embeddings.value(testMovie),testRate)
+//          else (testMovie, Array.ofDim[Double](100) ,testRate)
+//        case (testMovie, testRate) => (testMovie,embeddings.value(3258),testRate)
+//        case (testMovie, testRate) => (testMovie,embeddings.value(1339),testRate)
+      }
+        testEmbed.map{
+          case (testMovie, testEmbedding, testRate) =>
           val trainFilter = trainList.filter(_._1!=testMovie)
-          val dist = trainEmbed.map{ case (trainMovieId, trainEmbed, trainRate) =>
-            (cosineSimilarity(testEmbedding, trainEmbed), trainRate) }
+          val dist = trainEmbed.map {
+            case (trainMovieId, trainEmbed, trainRate) =>
+              (cosineSimilarity(testEmbedding, trainEmbed), trainRate)
+          }
           val topItems = dist.sortBy(_._1)(Ordering[Double].reverse).take(numMovies)
           val predictedRate = if (typeAvg==0) weightedAverage(topItems) else naiveAverage(topItems)
-          val err = testRate - predictedRate
+
+//          println(testMovie, testRate, predictedRate)
+            val err = testRate - predictedRate
+//            println(testMovie, err)
           (math.pow(err, 2.0),1)
         }.reduce((acc, elem) => (acc._1+elem._1, acc._2+elem._2))
+
       }
+
+//      println(err_sqr)
       val partialResult = err_sqr.reduce((acc, elem) => (acc._1+elem._1, acc._2+elem._2))
+//      println(partialResult)
+
       trainBroadcast.unpersist()
       partialResult
     }
-    val (rmseNum, rmseDenom) = (0 to 24).map(i => calcErr(i)).reduce((a,b) => (a._1+b._1, a._2+b._2))
+
+    def predict(cntr: Integer): Unit = {
+      /* calculate error sum of squares and number of observations for a given subset of test data
+
+         Parameters
+         ----------
+         cntr: Integer; indicator for which subset of the data to look at
+
+         Return
+         ------
+         partialResult: (Double, Integer); the first element of the tuple is the error sum of squares and the second
+                                           element is the count of observations
+
+       */
+//      # identify the embeddings available
+      val embkeys = embeddingRDD.map(_._1).collect()
+
+      // broadcast training set as a hashmap for efficient calculation at the workers
+      val toBroadcast =  trainData(cntr).collectAsMap()
+      val trainUsers = toBroadcast.keys.toArray
+      val trainBroadcast = sc.broadcast(toBroadcast)
+
+      // make prediction for each of the rows in the test set
+
+      val prediction =
+        testData
+          .filter{
+            case ( x: Int, y:List[(Int, Double)]) =>
+              trainUsers.contains(x)
+          }.map{
+          case (user, testList) =>
+            val trainList = trainBroadcast.value(user)//.filter(_._1 != testMovie)
+            val trainEmbed = trainList.map {
+              case (movie, rate) =>
+                (movie, embeddings.value(movie), rate)
+            }
+
+            val testEmbed = testList.map{
+              case (testMovie, testRate) =>
+                (testMovie,embeddings.value(testMovie),testRate)
+            }
+
+            val predictions = testEmbed.map {
+              case (testMovie, testEmbedding, testRate) =>
+                val trainFilter = trainList.filter(_._1 != testMovie)
+                val dist = trainEmbed.map {
+                  case (trainMovieId, trainEmbed, trainRate) =>
+                    (cosineSimilarity(testEmbedding, trainEmbed), trainRate)
+                }
+                val topItems = dist.sortBy(_._1)(Ordering[Double].reverse).take(numMovies)
+                val predictedRate = if (typeAvg == 0) weightedAverage(topItems) else naiveAverage(topItems)
+
+                (testMovie, testRate, predictedRate)
+
+            }
+           (user, predictions)
+
+        }//.reduceByKey(_++_)
+
+      trainBroadcast.unpersist()
+//      val schema = StructType(StructField("x", IntegerType, true)::
+//        StructField("y", IntegerType, true)::Nil)
+//
+//      prediction
+      prediction.coalesce(1).saveAsTextFile("/Users/jaimealmeida/Repos/L2V_Sandbox/rmseNew/rmseconfig/predictions")
+
+    }
+
+    val (rmseNum, rmseDenom) = (0 to 0).map(i => calcErr(i)).reduce((a,b) => (a._1+b._1, a._2+b._2))
+    (0 to 0).map(i => predict(i))
+//    val (rmseNum, rmseDenom) = (0 to 24).map(i => calcErr(i)).reduce((a,b) => (a._1+b._1, a._2+b._2))
     embeddings.unpersist()
     val listOutput = List(embedingSize, walkLength, numWalks,math.sqrt(rmseNum/rmseDenom))
-    sc.parallelize(listOutput).saveAsTextFile(outputDir+s"${embedingSize}_${walkLength}_${numWalks}")
+    sc.parallelize(listOutput).coalesce(1).saveAsTextFile(outputDir+s"${embedingSize}_${walkLength}_${numWalks}")
 
   }
 
   def main(args: Array[String]) {
     // generate map containing relevant parameters passed by user
-    val s3Bkt = args(0)
-    val confMap = getConfMap(s3Bkt+"confRmse.txt")
+//    val s3Bkt = args(0)
+    val s3Bkt = "/Users/jaimealmeida/Repos/L2V_Sandbox/rmseNew/rmseconfig/"
+//    "/Users/jaimealmeida/Repos/l2v/ratings_train_formatted.txt"
+
 
     //initialize spark conference
     val conf = new SparkConf()
       .setAppName("RmseNew")
-      .setMaster("yarn")
-      .set("spark.dynamicAllocation.enabled","true")
-      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-      .set("spark.kryoserializer.buffer", "24000k")
-      .set("spark.kryoserializer.buffer.max", "2047000k")
-      .set("spark.memory.useLegacyMode", "true")
-      .set("spark.shuffle.memoryFraction", ".9")
-      .set("spark.storage.memoryFraction", ".1")
+//      .setMaster("yarn")
+      .setMaster("local[*]")
+//      .set("spark.dynamicAllocation.enabled","true")
+//      .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+//      .set("spark.kryoserializer.buffer", "24000k")
+//      .set("spark.kryoserializer.buffer.max", "2047000k")
+//      .set("spark.memory.useLegacyMode", "true")
+//      .set("spark.shuffle.memoryFraction", ".9")
+//      .set("spark.storage.memoryFraction", ".1")
 
     // create spark context
-    val accessKey = confMap("accessKey")
-    val secretKey = confMap("secretKey")
+//    val accessKey = confMap("accessKey")
+//    val secretKey = confMap("secretKey")
     implicit val sc = new SparkContext(conf)
-    val cred  = new BasicAWSCredentials(accessKey, secretKey)
-    val s3cli = new AmazonS3Client(cred, new ClientConfiguration())
-    val tm = new TransferManager(s3cli)
-    sc.hadoopConfiguration.set("fs.s3a.impl","org.apache.hadoop.fs.s3a.S3AFileSystem")
-    sc.hadoopConfiguration.set("fs.s3a.access.key", accessKey)
-    sc.hadoopConfiguration.set("fs.s3a.secret.key",secretKey)
-    sc.hadoopConfiguration.set("fs.s3.awsAccessKeyId", accessKey)
-    sc.hadoopConfiguration.set("fs.s3.awsSecretAccessKey",secretKey)
-    sc.hadoopConfiguration.set("fs.s3a.fast.upload", "true")
-    sc.hadoopConfiguration.set("fs.s3a.connection.maximum","100")
+    val confMap = getConfMap(s3Bkt+"confRmse.txt")
+//    val cred  = new BasicAWSCredentials(accessKey, secretKey)
+//    val s3cli = new AmazonS3Client(cred, new ClientConfiguration())
+//    val tm = new TransferManager(s3cli)
+//    sc.hadoopConfiguration.set("fs.s3a.impl","org.apache.hadoop.fs.s3a.S3AFileSystem")
+//    sc.hadoopConfiguration.set("fs.s3a.access.key", accessKey)
+//    sc.hadoopConfiguration.set("fs.s3a.secret.key",secretKey)
+//    sc.hadoopConfiguration.set("fs.s3.awsAccessKeyId", accessKey)
+//    sc.hadoopConfiguration.set("fs.s3.awsSecretAccessKey",listosecretKey)
+//    sc.hadoopConfiguration.set("fs.s3a.fast.upload", "true")
+//    sc.hadoopConfiguration.set("fs.s3a.connection.maximum","100")
 
     /* convert train data to a RDD
           key: user id
           value: list of all movies user has reviewed, List[(movie id, rating)]
      */
+    val embs = sc.textFile("/Users/jaimealmeida/Repos/L2V_Sandbox/rmseNew/rmseconfig/embeddings/100-10-10.embeddings0")
+    val losmismisimos = embs.map{ line =>
+      val perone = line.split(" ")
+      val embedding = perone.head.toInt
+      embedding
+    }.distinct.collect()
+
     val trainDir = s3Bkt+confMap("trainDir")
     val tD1 = getTrainOrTest(trainDir)
     val tdUser = tD1.map(_._1).distinct().collect()
     val tdMovie = tD1.map(_._2).distinct().collect()
-    val tD = tD1.map{case (i,j,k) => (i, List((j,k)))}.reduceByKey(_++_)
+
+    val tDfiltered = tD1.filter{case (i,j,k) => losmismisimos.contains(j)}
+
+    val tD = tDfiltered.map{case (i,j,k) => (i, List((j,k)))}.reduceByKey(_++_)
+
+//    val trainData = (1 to 25).map(i => tD.filter{case (k,v) => (k>= ((i-1)*20000)) && (k<(i*20000))}).toList
     val trainData = (1 to 25).map(i => tD.filter{case (k,v) => (k>= ((i-1)*20000)) && (k<(i*20000))}).toList
+//    val trainData = tD
+
+
 
     /* convert test data to a RDD
           key: user id
           value: list of all movies user has reviewed, List[(movie id, rating)]
      */
     val testDir = s3Bkt+confMap("testDir")
-    val testData = getTrainOrTest(testDir).filter{case (i,j,k) => tdUser.contains(i) && tdMovie.contains(j)}
+    val testData = getTrainOrTest(testDir).filter{case (i,j,k) => tdUser.contains(i) && tdMovie.contains(j) && losmismisimos.contains(j)} // filtering test set on training user/movies
       .map{case (i,j,k) => (i, List((j,k)))}.reduceByKey(_++_)
 
     /* get hyperparameter map
@@ -372,21 +550,23 @@ object RmseNew {
 
     // get the list of all embedding files
     val embeddingDir = s3Bkt+confMap("embeddingDir")
-    val llrSuffix = confMap("llrSuffix")
+//    val llrSuffix = confMap("llrSuffix")
     val embeddingDirNum = confMap("embeddingDirNum").toInt
+//    val embeddingFiles =  (s3Bkt+"/embeddingdir/train_llr_threshold10-10-100.embeddings").toList
     val embeddingFiles = (0 to embeddingDirNum).map{i =>
-      embeddingDir+s"llr_output_test_${llrSuffix}_${i}.txt"}.toList
+      embeddingDir+s"100-10-10.embeddings${i}"}.toList
 
     /* initialize function that return hyperparameters and embedding map for given embedding file
        with the hyperparameter map
      */
+
     val getEmbed = getEmbedHyperParam(hyperParamMap)_
 
     // initialize function that calculates RMSE with values that are constant for all sets of embeddings
     val numMovies = confMap("numMovies").toInt
     val typeAvg = confMap("typeAvg").toInt
     val outputDir = s3Bkt+confMap("outputDir")
-    val getRmse = rmseCalculate(getEmbed, numMovies, trainData, testData, typeAvg, outputDir)_
+    val getRmse = rmseCalculate(getEmbed, numMovies, trainData, testData, typeAvg, outputDir)_  // assign function to variable
 
     // iterate through each embedding file and get its accompanying hyperparameters and rmse
     val rmseOutput = embeddingFiles.map(getRmse)
