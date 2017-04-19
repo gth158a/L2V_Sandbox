@@ -291,7 +291,7 @@ object RmseNew {
     val (Array(embedingSize, walkLength, numWalks), embeddingRDD) = getEmbeddings(embedFile)
     val embeddings = sc.broadcast(embeddingRDD.collectAsMap())
 
-    def calcErr(cntr: Integer): (Double, Int) = {
+    def calcErr(cntr: Integer, predictions: RDD[(Int, List[(Int, Double, Double)])]): (Double, Int) = {
       /* calculate error sum of squares and number of observations for a given subset of test data
 
          Parameters
@@ -304,90 +304,105 @@ object RmseNew {
                                            element is the count of observations
 
        */
-      val embkeys = embeddingRDD.map(_._1).collect()
+      //      val embkeys = embeddingRDD.map(_._1).collect()
 
-//      val toBroadcast =  trainData(cntr).collectAsMap()
-      val toBroadcast =  trainData(cntr)
-//        .filter{
-//                    case ( x: Int, y:List[(Int, Double)]) =>
-//                      embkeys.contains(y(0)._1)
-//                    }
-//        .filter{
-//        item => embkeys.contains(item._2)
-//      }
-            .collectAsMap()
-      val trainUsers = toBroadcast.keys.toArray
-      val trainBroadcast = sc.broadcast(toBroadcast)
-//      val trainBroadcast = sc.broadcast(trainData(cntr).collectAsMap())
+      //      val toBroadcast =  trainData(cntr).collectAsMap()
+      //      val toBroadcast =  trainData(cntr)
+      //        .filter{
+      //                    case ( x: Int, y:List[(Int, Double)]) =>
+      //                      embkeys.contains(y(0)._1)
+      //                    }
+      //        .filter{
+      //        item => embkeys.contains(item._2)
+      //      }
+      //            .collectAsMap()
+      //      val trainUsers = toBroadcast.keys.toArray
+      //      val trainBroadcast = sc.broadcast(toBroadcast)
+      //      val trainBroadcast = sc.broadcast(trainData(cntr).collectAsMap())
 
-//        embeddingRDD.map{item => item._1}
+      //        embeddingRDD.map{item => item._1}
 
-      val err_sqr =
-        testData
-          .filter{
-          case ( x: Int, y:List[(Int, Double)]) =>
-            trainUsers.contains(x)
-          }
+      //      val err_sqr =
+      ////        testData
+      ////          .filter{
+      ////          case ( x: Int, y:List[(Int, Double)]) =>
+      ////            trainUsers.contains(x)
+      ////          }
+      //
+      ////          .filter{ item => item.map{item._2} embkeys.contains(item._2)}
+      //
+      ////          .filter{
+      ////        case (k,v) =>
+      ////          (k<((cntr+1)*20000) && (k>=(cntr*20000)))
+      //////      }
+      ////          .map{
+      ////        case (user, testList) =>
+      ////        val trainList = trainBroadcast.value(user)//.filter(_._1 != testMovie)
+      ////
+      ////
+      //
+      //
+      //            val trainEmbed = trainList.map {
+      //
+      //              case (movie, rate) =>
+      ////                if (embeddings.value(movie) != null )
+      //                  (movie, embeddings.value(movie), rate)
+      ////                else (movie, Array.ofDim[Double](100), rate)
+      ////                              (movie, embeddings.value(3258),rate)
+      //
+      //
+      //            }
+      //
+      //
+      //
+      //      val testEmbed = testList.map{
+      //        case (testMovie, testRate) =>
+      ////          if (embeddings.value(testMovie) != null )
+      //            (testMovie,embeddings.value(testMovie),testRate)
+      ////          else (testMovie, Array.ofDim[Double](100) ,testRate)
+      ////        case (testMovie, testRate) => (testMovie,embeddings.value(3258),testRate)
+      ////        case (testMovie, testRate) => (testMovie,embeddings.value(1339),testRate)
+      //      }
+      //        testEmbed.map{
+      //          case (testMovie, testEmbedding, testRate) =>
+      //          val trainFilter = trainList.filter(_._1!=testMovie)
+      //          val dist = trainEmbed.map {
+      //            case (trainMovieId, trainEmbed, trainRate) =>
+      //              (cosineSimilarity(testEmbedding, trainEmbed), trainRate)
+      //          }
+      //          val topItems = dist.sortBy(_._1)(Ordering[Double].reverse).take(numMovies)
+      //          val predictedRate = if (typeAvg==0) weightedAverage(topItems) else naiveAverage(topItems)
 
-//          .filter{ item => item.map{item._2} embkeys.contains(item._2)}
+      //          println(testMovie, testRate, predictedRate)
 
-//          .filter{
-//        case (k,v) =>
-//          (k<((cntr+1)*20000) && (k>=(cntr*20000)))
-//      }
-          .map{
-        case (user, testList) =>
-        val trainList = trainBroadcast.value(user)//.filter(_._1 != testMovie)
+      val err_sqr = predictions.map {
+        case (user, listitems) => listitems.map {
+          case (item, trainRate, predictedRate) =>
+            val err = trainRate - predictedRate
+            //            println(testMovie, err)
+            (math.pow(err, 2.0), 1)
 
+        }.reduce((acc, elem) => (acc._1 + elem._1, acc._2 + elem._2))
 
-
-
-            val trainEmbed = trainList.map {
-
-              case (movie, rate) =>
-//                if (embeddings.value(movie) != null )
-                  (movie, embeddings.value(movie), rate)
-//                else (movie, Array.ofDim[Double](100), rate)
-//                              (movie, embeddings.value(3258),rate)
-
-
-            }
-
-
-
-      val testEmbed = testList.map{
-        case (testMovie, testRate) =>
-//          if (embeddings.value(testMovie) != null )
-            (testMovie,embeddings.value(testMovie),testRate)
-//          else (testMovie, Array.ofDim[Double](100) ,testRate)
-//        case (testMovie, testRate) => (testMovie,embeddings.value(3258),testRate)
-//        case (testMovie, testRate) => (testMovie,embeddings.value(1339),testRate)
       }
-        testEmbed.map{
-          case (testMovie, testEmbedding, testRate) =>
-          val trainFilter = trainList.filter(_._1!=testMovie)
-          val dist = trainEmbed.map {
-            case (trainMovieId, trainEmbed, trainRate) =>
-              (cosineSimilarity(testEmbedding, trainEmbed), trainRate)
-          }
-          val topItems = dist.sortBy(_._1)(Ordering[Double].reverse).take(numMovies)
-          val predictedRate = if (typeAvg==0) weightedAverage(topItems) else naiveAverage(topItems)
-
-//          println(testMovie, testRate, predictedRate)
-            val err = testRate - predictedRate
-//            println(testMovie, err)
-          (math.pow(err, 2.0),1)
-        }.reduce((acc, elem) => (acc._1+elem._1, acc._2+elem._2))
-
-      }
-
-//      println(err_sqr)
-      val partialResult = err_sqr.reduce((acc, elem) => (acc._1+elem._1, acc._2+elem._2))
-//      println(partialResult)
-
-      trainBroadcast.unpersist()
+      val partialResult = err_sqr.reduce((acc, elem) => (acc._1 + elem._1, acc._2 + elem._2))
       partialResult
     }
+
+//      val err = testRate - predictedRate
+////            println(testMovie, err)
+//          (math.pow(err, 2.0),1)
+//        }.reduce((acc, elem) => (acc._1+elem._1, acc._2+elem._2))
+//
+//      }
+//
+////      println(err_sqr)
+//      val partialResult = err_sqr.reduce((acc, elem) => (acc._1+elem._1, acc._2+elem._2))
+////      println(partialResult)
+//
+//      trainBroadcast.unpersist()
+//      partialResult
+//    }
 
     def predict(cntr: Integer, output: String): RDD[(Int, List[(Int, Double, Double)])] = {
       /* Predict scores for train set based on averaging method
@@ -426,7 +441,7 @@ object RmseNew {
           case (user, testList) =>
             //  here is where the filter needs to be placed !!!!!!
 //            val itemsOfTestUser = testList.map(_._1).distinct().collect()
-            val itemsOfTestUser = testList(_._1).distinct().collect()
+//            val itemsOfTestUser = testList(_._1).distinct().collect()
 
             val trainList = trainBroadcast.value(user)//.filter(_._1 != testMovie)
 
@@ -474,9 +489,10 @@ object RmseNew {
 //    (0 to 0).map(i => predict(i))
     val p = predict(0, output="/Users/jaimealmeida/Repos/L2V_Sandbox/rmseNew/rmseconfig/predictions")
 //    val (rmseNum, rmseDenom) = (0 to 24).map(i => calcErr(i)).reduce((a,b) => (a._1+b._1, a._2+b._2))
-    embeddings.unpersist()
+    val (rmseNum, rmseDenom) = calcErr(0, p)
+//    embeddings.unpersist()
     val listOutput = List(embedingSize, walkLength, numWalks,math.sqrt(rmseNum/rmseDenom))
-    sc.parallelize(listOutput).coalesce(1).saveAsTextFile(outputDir+s"${embedingSize}_${walkLength}_${numWalks}")
+    sc.parallelize(listOutput).coalesce(1).saveAsTextFile(outputDir+s"new${embedingSize}_${walkLength}_${numWalks}")
 
   }
 
