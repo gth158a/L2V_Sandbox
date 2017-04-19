@@ -389,20 +389,25 @@ object RmseNew {
       partialResult
     }
 
-    def predict(cntr: Integer): Unit = {
-      /* calculate error sum of squares and number of observations for a given subset of test data
+    def predict(cntr: Integer, output: String): RDD[(Int, List[(Int, Double, Double)])] = {
+      /* Predict scores for train set based on averaging method
 
          Parameters
          ----------
          cntr: Integer; indicator for which subset of the data to look at
+         type of average
+         output_filename
+
 
          Return
          ------
          partialResult: (Double, Integer); the first element of the tuple is the error sum of squares and the second
                                            element is the count of observations
+         return RDD as a variable to do error calculation
 
        */
-//      # identify the embeddings available
+
+      //      # identify the embeddings available
       val embkeys = embeddingRDD.map(_._1).collect()
 
       // broadcast training set as a hashmap for efficient calculation at the workers
@@ -419,7 +424,13 @@ object RmseNew {
               trainUsers.contains(x)
           }.map{
           case (user, testList) =>
+            //  here is where the filter needs to be placed !!!!!!
+//            val itemsOfTestUser = testList.map(_._1).distinct().collect()
+            val itemsOfTestUser = testList(_._1).distinct().collect()
+
             val trainList = trainBroadcast.value(user)//.filter(_._1 != testMovie)
+
+
             val trainEmbed = trainList.map {
               case (movie, rate) =>
                 (movie, embeddings.value(movie), rate)
@@ -452,12 +463,16 @@ object RmseNew {
 //        StructField("y", IntegerType, true)::Nil)
 //
 //      prediction
-      prediction.coalesce(1).saveAsTextFile("/Users/jaimealmeida/Repos/L2V_Sandbox/rmseNew/rmseconfig/predictions")
+      if (output != None)
+        prediction.coalesce(1).saveAsTextFile(output)
+
+      prediction
 
     }
 
-    val (rmseNum, rmseDenom) = (0 to 0).map(i => calcErr(i)).reduce((a,b) => (a._1+b._1, a._2+b._2))
-    (0 to 0).map(i => predict(i))
+//    val (rmseNum, rmseDenom) = (0 to 0).map(i => calcErr(i)).reduce((a,b) => (a._1+b._1, a._2+b._2))
+//    (0 to 0).map(i => predict(i))
+    val p = predict(0, output="/Users/jaimealmeida/Repos/L2V_Sandbox/rmseNew/rmseconfig/predictions")
 //    val (rmseNum, rmseDenom) = (0 to 24).map(i => calcErr(i)).reduce((a,b) => (a._1+b._1, a._2+b._2))
     embeddings.unpersist()
     val listOutput = List(embedingSize, walkLength, numWalks,math.sqrt(rmseNum/rmseDenom))
